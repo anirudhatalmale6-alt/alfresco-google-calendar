@@ -1,8 +1,0 @@
-<webscript>
-    <shortname>Google Calendar OAuth Callback</shortname>
-    <description>Handle Google OAuth callback with authorization code</description>
-    <url>/api/google-calendar/callback</url>
-    <authentication>none</authentication>
-    <format default="json">argument</format>
-    <transaction>required</transaction>
-</webscript>

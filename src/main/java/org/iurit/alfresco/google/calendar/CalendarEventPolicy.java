@@ -15,10 +15,6 @@ import org.apache.commons.logging.LogFactory;
 import java.io.Serializable;
 import java.util.Map;
 
-/**
- * Alfresco Node Policies that trigger one-way sync from Alfresco to Google Calendar.
- * Bound to ia:calendarEvent type - fires on create, update, delete.
- */
 public class CalendarEventPolicy implements
         NodeServicePolicies.OnCreateNodePolicy,
         NodeServicePolicies.OnUpdatePropertiesPolicy,
@@ -30,7 +26,6 @@ public class CalendarEventPolicy implements
     private NodeService nodeService;
     private GoogleCalendarService googleCalendarService;
 
-    // Flag to prevent re-entrant calls when we update the node ourselves
     private static final ThreadLocal<Boolean> IN_SYNC = new ThreadLocal<Boolean>() {
         @Override
         protected Boolean initialValue() {
@@ -50,9 +45,6 @@ public class CalendarEventPolicy implements
         this.googleCalendarService = googleCalendarService;
     }
 
-    /**
-     * Register policies on init (called by Spring).
-     */
     public void init() {
         policyComponent.bindClassBehaviour(
                 NodeServicePolicies.OnCreateNodePolicy.QNAME,
@@ -78,6 +70,7 @@ public class CalendarEventPolicy implements
 
         NodeRef eventNode = childAssocRef.getChildRef();
         if (!nodeService.exists(eventNode)) return;
+        if (GoogleCalendarService.wasRecentlySyncedFromGoogle(eventNode)) return;
 
         try {
             IN_SYNC.set(Boolean.TRUE);
@@ -93,8 +86,8 @@ public class CalendarEventPolicy implements
     public void onUpdateProperties(NodeRef nodeRef, Map<QName, Serializable> before, Map<QName, Serializable> after) {
         if (IN_SYNC.get()) return;
         if (!nodeService.exists(nodeRef)) return;
+        if (GoogleCalendarService.wasRecentlySyncedFromGoogle(nodeRef)) return;
 
-        // Only sync if calendar-relevant properties changed
         boolean relevant = hasChanged(before, after, GoogleCalendarService.PROP_WHAT_EVENT)
                 || hasChanged(before, after, GoogleCalendarService.PROP_FROM_DATE)
                 || hasChanged(before, after, GoogleCalendarService.PROP_TO_DATE)
@@ -117,27 +110,17 @@ public class CalendarEventPolicy implements
     public void beforeDeleteNode(NodeRef nodeRef) {
         if (IN_SYNC.get()) return;
         if (!nodeService.exists(nodeRef)) return;
+        if (GoogleCalendarService.wasRecentlySyncedFromGoogle(nodeRef)) return;
 
-        // Capture Google event info before the node is deleted
         if (!nodeService.hasAspect(nodeRef, GoogleCalendarService.ASPECT_SYNCED)) return;
 
         String googleEventId = (String) nodeService.getProperty(nodeRef, GoogleCalendarService.PROP_GOOGLE_EVENT_ID);
         String calendarId = (String) nodeService.getProperty(nodeRef, GoogleCalendarService.PROP_GOOGLE_CALENDAR_ID);
 
-        // Get site ID from the node's location
-        String siteId = null;
-        org.alfresco.service.cmr.site.SiteInfo site =
-                ((org.alfresco.service.cmr.site.SiteService)
-                        org.alfresco.repo.policy.BehaviourFilter.class.getClassLoader()) != null ?
-                        null : null;
-
-        // We need siteService - get it through the googleCalendarService
-        // Since we can't easily get siteId here before deletion, we store it on the aspect
-        // For now, try to resolve from the node hierarchy
         try {
             IN_SYNC.set(Boolean.TRUE);
-            // We need to find the site from node path
             org.alfresco.service.cmr.repository.Path path = nodeService.getPath(nodeRef);
+            String siteId = null;
             for (int i = 0; i < path.size(); i++) {
                 org.alfresco.service.cmr.repository.Path.Element element = path.get(i);
                 if (element instanceof org.alfresco.service.cmr.repository.Path.ChildAssocElement) {

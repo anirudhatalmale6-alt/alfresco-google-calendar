@@ -1,8 +1,0 @@
-<webscript>
-    <shortname>Google Calendar Config Update</shortname>
-    <description>Set target calendar or disconnect Google Calendar for a site</description>
-    <url>/api/google-calendar/config</url>
-    <authentication>user</authentication>
-    <format default="json">argument</format>
-    <transaction>required</transaction>
-</webscript>

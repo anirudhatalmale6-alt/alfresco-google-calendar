@@ -1,8 +1,0 @@
-<webscript>
-    <shortname>Google Calendar Auth</shortname>
-    <description>Initiate Google Calendar OAuth flow for a site</description>
-    <url>/api/google-calendar/auth?siteId={siteId}</url>
-    <authentication>user</authentication>
-    <format default="json">argument</format>
-    <transaction>required</transaction>
-</webscript>

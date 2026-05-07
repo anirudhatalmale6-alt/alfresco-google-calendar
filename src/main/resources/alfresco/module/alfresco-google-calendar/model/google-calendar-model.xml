@@ -3,7 +3,7 @@
 
     <description>Google Calendar Sync Model</description>
     <author>Iurit</author>
-    <version>1.0</version>
+    <version>1.1</version>
 
     <imports>
         <import uri="http://www.alfresco.org/model/dictionary/1.0" prefix="d"/>
@@ -16,7 +16,6 @@
     </namespaces>
 
     <aspects>
-        <!-- Applied to ia:calendarEvent nodes when synced to Google Calendar -->
         <aspect name="gcal:synced">
             <title>Google Calendar Synced</title>
             <properties>
@@ -43,7 +42,6 @@
             </properties>
         </aspect>
 
-        <!-- Applied to st:site nodes to store Google Calendar config per site -->
         <aspect name="gcal:siteConfig">
             <title>Google Calendar Site Configuration</title>
             <properties>
@@ -70,6 +68,11 @@
                 <property name="gcal:tokenExpiry">
                     <title>Token Expiry Time</title>
                     <type>d:long</type>
+                    <mandatory>false</mandatory>
+                </property>
+                <property name="gcal:syncToken">
+                    <title>Google Calendar Sync Token</title>
+                    <type>d:text</type>
                     <mandatory>false</mandatory>
                 </property>
             </properties>

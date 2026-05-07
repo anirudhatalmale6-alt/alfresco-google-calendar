@@ -2,10 +2,10 @@ package org.iurit.alfresco.google.calendar;
 
 import com.google.api.client.auth.oauth2.BearerToken;
 import com.google.api.client.auth.oauth2.Credential;
-import com.google.api.client.auth.oauth2.TokenResponse;
 import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
 import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeTokenRequest;
 import com.google.api.client.googleapis.auth.oauth2.GoogleTokenResponse;
+import com.google.api.client.googleapis.json.GoogleJsonResponseException;
 import com.google.api.client.http.GenericUrl;
 import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.jackson2.JacksonFactory;
@@ -15,8 +15,10 @@ import com.google.api.services.calendar.model.CalendarList;
 import com.google.api.services.calendar.model.CalendarListEntry;
 import com.google.api.services.calendar.model.Event;
 import com.google.api.services.calendar.model.EventDateTime;
+import com.google.api.services.calendar.model.Events;
 
 import org.alfresco.model.ContentModel;
+import org.alfresco.service.cmr.repository.ChildAssociationRef;
 import org.alfresco.service.cmr.repository.NodeRef;
 import org.alfresco.service.cmr.repository.NodeService;
 import org.alfresco.service.cmr.site.SiteInfo;
@@ -31,13 +33,12 @@ import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Service for interacting with Google Calendar API.
- * Handles OAuth token management and CRUD operations on Google Calendar events.
- */
 public class GoogleCalendarService {
 
     private static final Log logger = LogFactory.getLog(GoogleCalendarService.class);
@@ -46,7 +47,6 @@ public class GoogleCalendarService {
     private static final JacksonFactory JSON_FACTORY = JacksonFactory.getDefaultInstance();
     private static final String APPLICATION_NAME = "Alfresco-GoogleCalendar-Sync/1.0";
 
-    // Google Calendar event property namespace
     private static final String GCAL_NS = "http://www.iurit.org/model/google-calendar/1.0";
 
     public static final QName ASPECT_SYNCED = QName.createQName(GCAL_NS, "synced");
@@ -60,8 +60,8 @@ public class GoogleCalendarService {
     public static final QName PROP_ACCESS_TOKEN = QName.createQName(GCAL_NS, "accessToken");
     public static final QName PROP_REFRESH_TOKEN = QName.createQName(GCAL_NS, "refreshToken");
     public static final QName PROP_TOKEN_EXPIRY = QName.createQName(GCAL_NS, "tokenExpiry");
+    public static final QName PROP_SYNC_TOKEN = QName.createQName(GCAL_NS, "syncToken");
 
-    // Alfresco calendar model QNames
     private static final String IA_NS = "http://www.alfresco.org/model/calendar";
     public static final QName TYPE_CALENDAR_EVENT = QName.createQName(IA_NS, "calendarEvent");
     public static final QName PROP_WHAT_EVENT = QName.createQName(IA_NS, "whatEvent");
@@ -69,6 +69,13 @@ public class GoogleCalendarService {
     public static final QName PROP_TO_DATE = QName.createQName(IA_NS, "toDate");
     public static final QName PROP_WHERE_EVENT = QName.createQName(IA_NS, "whereEvent");
     public static final QName PROP_DESCRIPTION_EVENT = QName.createQName(IA_NS, "descriptionEvent");
+
+    private static final Set<NodeRef> RECENTLY_SYNCED_FROM_GOOGLE =
+            Collections.newSetFromMap(new ConcurrentHashMap<NodeRef, Boolean>());
+
+    public static boolean wasRecentlySyncedFromGoogle(NodeRef nodeRef) {
+        return RECENTLY_SYNCED_FROM_GOOGLE.remove(nodeRef);
+    }
 
     private NodeService nodeService;
     private SiteService siteService;
@@ -98,14 +105,13 @@ public class GoogleCalendarService {
 
     public void init() {
         logger.info("GoogleCalendarService initialized:");
-        logger.info("  clientId = [" + (clientId != null ? clientId.substring(0, Math.min(5, clientId.length())) + "..." : "null") + "]");
-        logger.info("  clientSecret = [" + (clientSecret != null ? "SET" : "null") + "]");
+        logger.info("  clientId = [" + (clientId != null && clientId.length() > 5 ? clientId.substring(0, 5) + "..." : "null/empty") + "]");
+        logger.info("  clientSecret = [" + (clientSecret != null && !clientSecret.isEmpty() ? "SET" : "null/empty") + "]");
         logger.info("  redirectUri = [" + redirectUri + "]");
     }
 
-    /**
-     * Build the Google OAuth authorization URL for a site.
-     */
+    // ---- OAuth ----
+
     public String getAuthorizationUrl(String siteId) {
         GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
                 HTTP_TRANSPORT, JSON_FACTORY, clientId, clientSecret,
@@ -120,9 +126,6 @@ public class GoogleCalendarService {
                 .build();
     }
 
-    /**
-     * Exchange authorization code for tokens and store on the site node.
-     */
     public void handleAuthorizationCode(String siteId, String code) throws IOException {
         GoogleTokenResponse tokenResponse = new GoogleAuthorizationCodeTokenRequest(
                 HTTP_TRANSPORT, JSON_FACTORY, clientId, clientSecret, code, redirectUri)
@@ -148,9 +151,8 @@ public class GoogleCalendarService {
         logger.info("Google Calendar OAuth tokens stored for site: " + siteId);
     }
 
-    /**
-     * List available Google Calendars for the authenticated site.
-     */
+    // ---- Forward sync: Alfresco -> Google ----
+
     public List<CalendarListEntry> listCalendars(String siteId) throws IOException {
         Calendar service = getCalendarService(siteId);
         if (service == null) return Collections.emptyList();
@@ -159,9 +161,6 @@ public class GoogleCalendarService {
         return calendarList.getItems() != null ? calendarList.getItems() : Collections.<CalendarListEntry>emptyList();
     }
 
-    /**
-     * Set the target Google Calendar for a site.
-     */
     public void setTargetCalendar(String siteId, String calendarId) {
         SiteInfo site = siteService.getSite(siteId);
         if (site == null) return;
@@ -170,34 +169,20 @@ public class GoogleCalendarService {
         logger.info("Target Google Calendar set for site " + siteId + ": " + calendarId);
     }
 
-    /**
-     * Create a Google Calendar event from an Alfresco calendar event node.
-     */
     public String createEvent(NodeRef eventNode) throws IOException {
         String siteId = getSiteIdForNode(eventNode);
-        if (siteId == null) {
-            logger.debug("Event node not in a site, skipping sync: " + eventNode);
-            return null;
-        }
-
-        if (!isSyncEnabled(siteId)) {
-            logger.debug("Google Calendar sync not enabled for site: " + siteId);
-            return null;
-        }
+        if (siteId == null) return null;
+        if (!isSyncEnabled(siteId)) return null;
 
         Calendar service = getCalendarService(siteId);
         if (service == null) return null;
 
         String calendarId = getTargetCalendarId(siteId);
-        if (calendarId == null) {
-            logger.warn("No target calendar configured for site: " + siteId);
-            return null;
-        }
+        if (calendarId == null) return null;
 
         Event googleEvent = buildGoogleEvent(eventNode);
         Event created = service.events().insert(calendarId, googleEvent).execute();
 
-        // Store Google event ID on the Alfresco node
         if (!nodeService.hasAspect(eventNode, ASPECT_SYNCED)) {
             nodeService.addAspect(eventNode, ASPECT_SYNCED, null);
         }
@@ -205,29 +190,19 @@ public class GoogleCalendarService {
         nodeService.setProperty(eventNode, PROP_GOOGLE_CALENDAR_ID, calendarId);
         nodeService.setProperty(eventNode, PROP_LAST_SYNC_TIME, new Date());
 
-        logger.info("Created Google Calendar event: " + created.getId() +
-                " for Alfresco event: " + eventNode);
-
+        logger.info("Created Google Calendar event: " + created.getId() + " for Alfresco event: " + eventNode);
         return created.getId();
     }
 
-    /**
-     * Update an existing Google Calendar event from Alfresco changes.
-     */
     public void updateEvent(NodeRef eventNode) throws IOException {
         if (!nodeService.hasAspect(eventNode, ASPECT_SYNCED)) {
-            // Not synced yet, try creating instead
             createEvent(eventNode);
             return;
         }
 
         String googleEventId = (String) nodeService.getProperty(eventNode, PROP_GOOGLE_EVENT_ID);
         String calendarId = (String) nodeService.getProperty(eventNode, PROP_GOOGLE_CALENDAR_ID);
-
-        if (googleEventId == null || calendarId == null) {
-            logger.warn("Synced aspect present but missing Google IDs on node: " + eventNode);
-            return;
-        }
+        if (googleEventId == null || calendarId == null) return;
 
         String siteId = getSiteIdForNode(eventNode);
         if (siteId == null || !isSyncEnabled(siteId)) return;
@@ -237,18 +212,13 @@ public class GoogleCalendarService {
 
         Event googleEvent = buildGoogleEvent(eventNode);
         service.events().update(calendarId, googleEventId, googleEvent).execute();
-
         nodeService.setProperty(eventNode, PROP_LAST_SYNC_TIME, new Date());
 
         logger.info("Updated Google Calendar event: " + googleEventId);
     }
 
-    /**
-     * Delete a Google Calendar event when Alfresco event is deleted.
-     */
     public void deleteEvent(String siteId, String googleEventId, String calendarId) throws IOException {
         if (googleEventId == null || calendarId == null || siteId == null) return;
-
         if (!isSyncEnabled(siteId)) return;
 
         Calendar service = getCalendarService(siteId);
@@ -257,7 +227,7 @@ public class GoogleCalendarService {
         try {
             service.events().delete(calendarId, googleEventId).execute();
             logger.info("Deleted Google Calendar event: " + googleEventId);
-        } catch (com.google.api.client.googleapis.json.GoogleJsonResponseException e) {
+        } catch (GoogleJsonResponseException e) {
             if (e.getStatusCode() == 404 || e.getStatusCode() == 410) {
                 logger.debug("Google event already deleted: " + googleEventId);
             } else {
@@ -266,9 +236,6 @@ public class GoogleCalendarService {
         }
     }
 
-    /**
-     * Disconnect Google Calendar from a site.
-     */
     public void disconnect(String siteId) {
         SiteInfo site = siteService.getSite(siteId);
         if (site == null) return;
@@ -280,11 +247,206 @@ public class GoogleCalendarService {
             nodeService.setProperty(siteNode, PROP_REFRESH_TOKEN, null);
             nodeService.setProperty(siteNode, PROP_TOKEN_EXPIRY, null);
             nodeService.setProperty(siteNode, PROP_TARGET_CALENDAR_ID, null);
+            nodeService.setProperty(siteNode, PROP_SYNC_TOKEN, null);
         }
         logger.info("Google Calendar disconnected for site: " + siteId);
     }
 
-    // ---- Internal helpers ----
+    // ---- Reverse sync: Google -> Alfresco ----
+
+    public void syncAllSitesFromGoogle() {
+        List<SiteInfo> sites = siteService.listSites(null, null);
+        int synced = 0;
+        for (SiteInfo site : sites) {
+            String siteId = site.getShortName();
+            if (isSyncEnabled(siteId) && getTargetCalendarId(siteId) != null) {
+                try {
+                    syncFromGoogle(siteId);
+                    synced++;
+                } catch (Exception e) {
+                    logger.error("Reverse sync failed for site: " + siteId, e);
+                }
+            }
+        }
+        if (synced > 0) {
+            logger.debug("Reverse sync completed for " + synced + " site(s)");
+        }
+    }
+
+    public void syncFromGoogle(String siteId) throws IOException {
+        Calendar service = getCalendarService(siteId);
+        if (service == null) return;
+
+        String calendarId = getTargetCalendarId(siteId);
+        if (calendarId == null) return;
+
+        NodeRef calendarContainer = siteService.getContainer(siteId, "calendar");
+        if (calendarContainer == null) {
+            calendarContainer = siteService.createContainer(siteId, "calendar", ContentModel.TYPE_FOLDER, null);
+        }
+
+        Map<String, NodeRef> googleIdToNode = buildGoogleIdMap(calendarContainer);
+        String syncToken = getSyncToken(siteId);
+
+        try {
+            String pageToken = null;
+            do {
+                Calendar.Events.List request = service.events().list(calendarId);
+                if (syncToken != null) {
+                    request.setSyncToken(syncToken);
+                } else {
+                    request.setTimeMin(new com.google.api.client.util.DateTime(
+                            System.currentTimeMillis() - 90L * 24 * 60 * 60 * 1000));
+                }
+                if (pageToken != null) {
+                    request.setPageToken(pageToken);
+                }
+                request.setMaxResults(100);
+
+                Events eventsResponse = request.execute();
+                List<Event> items = eventsResponse.getItems();
+                if (items != null) {
+                    for (Event event : items) {
+                        try {
+                            processGoogleEvent(siteId, calendarContainer, googleIdToNode, calendarId, event);
+                        } catch (Exception e) {
+                            logger.warn("Failed to process Google event " + event.getId() + ": " + e.getMessage());
+                        }
+                    }
+                }
+
+                pageToken = eventsResponse.getNextPageToken();
+                if (eventsResponse.getNextSyncToken() != null) {
+                    storeSyncToken(siteId, eventsResponse.getNextSyncToken());
+                }
+            } while (pageToken != null);
+
+        } catch (GoogleJsonResponseException e) {
+            if (e.getStatusCode() == 410) {
+                storeSyncToken(siteId, null);
+                logger.info("Sync token expired for site " + siteId + ", will do full sync next cycle");
+            } else {
+                throw e;
+            }
+        }
+    }
+
+    private void processGoogleEvent(String siteId, NodeRef calendarContainer,
+            Map<String, NodeRef> googleIdToNode, String calendarId, Event googleEvent) {
+
+        String googleEventId = googleEvent.getId();
+        NodeRef existingNode = googleIdToNode.get(googleEventId);
+
+        if ("cancelled".equals(googleEvent.getStatus())) {
+            if (existingNode != null && nodeService.exists(existingNode)) {
+                RECENTLY_SYNCED_FROM_GOOGLE.add(existingNode);
+                nodeService.deleteNode(existingNode);
+                logger.info("Deleted Alfresco event (Google deleted): " + googleEventId);
+            }
+            return;
+        }
+
+        if (existingNode != null && nodeService.exists(existingNode)) {
+            updateAlfrescoEventFromGoogle(existingNode, googleEvent);
+        } else {
+            createAlfrescoEventFromGoogle(calendarContainer, calendarId, googleEvent);
+        }
+    }
+
+    private void createAlfrescoEventFromGoogle(NodeRef calendarContainer, String calendarId, Event googleEvent) {
+        Map<QName, Serializable> props = new HashMap<QName, Serializable>();
+        props.put(PROP_WHAT_EVENT, googleEvent.getSummary() != null ? googleEvent.getSummary() : "Untitled Event");
+        props.put(ContentModel.PROP_NAME, "gcal-" + googleEvent.getId());
+
+        if (googleEvent.getDescription() != null) {
+            props.put(PROP_DESCRIPTION_EVENT, googleEvent.getDescription());
+        }
+        if (googleEvent.getLocation() != null) {
+            props.put(PROP_WHERE_EVENT, googleEvent.getLocation());
+        }
+
+        Date startDate = getDateFromEventDateTime(googleEvent.getStart());
+        Date endDate = getDateFromEventDateTime(googleEvent.getEnd());
+        if (startDate != null) props.put(PROP_FROM_DATE, startDate);
+        if (endDate != null) props.put(PROP_TO_DATE, endDate);
+
+        ChildAssociationRef childRef = nodeService.createNode(
+                calendarContainer,
+                ContentModel.ASSOC_CONTAINS,
+                QName.createQName("http://www.alfresco.org/model/content/1.0",
+                        "gcal-" + googleEvent.getId()),
+                TYPE_CALENDAR_EVENT,
+                props);
+
+        NodeRef eventNode = childRef.getChildRef();
+        RECENTLY_SYNCED_FROM_GOOGLE.add(eventNode);
+
+        Map<QName, Serializable> aspectProps = new HashMap<QName, Serializable>();
+        aspectProps.put(PROP_GOOGLE_EVENT_ID, googleEvent.getId());
+        aspectProps.put(PROP_GOOGLE_CALENDAR_ID, calendarId);
+        aspectProps.put(PROP_LAST_SYNC_TIME, new Date());
+        nodeService.addAspect(eventNode, ASPECT_SYNCED, aspectProps);
+
+        logger.info("Created Alfresco event from Google: " + googleEvent.getId()
+                + " (" + googleEvent.getSummary() + ")");
+    }
+
+    private void updateAlfrescoEventFromGoogle(NodeRef eventNode, Event googleEvent) {
+        RECENTLY_SYNCED_FROM_GOOGLE.add(eventNode);
+
+        if (googleEvent.getSummary() != null) {
+            nodeService.setProperty(eventNode, PROP_WHAT_EVENT, googleEvent.getSummary());
+        }
+        nodeService.setProperty(eventNode, PROP_DESCRIPTION_EVENT, googleEvent.getDescription());
+        nodeService.setProperty(eventNode, PROP_WHERE_EVENT, googleEvent.getLocation());
+
+        Date startDate = getDateFromEventDateTime(googleEvent.getStart());
+        Date endDate = getDateFromEventDateTime(googleEvent.getEnd());
+        if (startDate != null) nodeService.setProperty(eventNode, PROP_FROM_DATE, startDate);
+        if (endDate != null) nodeService.setProperty(eventNode, PROP_TO_DATE, endDate);
+
+        nodeService.setProperty(eventNode, PROP_LAST_SYNC_TIME, new Date());
+    }
+
+    // ---- Helpers ----
+
+    private Date getDateFromEventDateTime(EventDateTime edt) {
+        if (edt == null) return null;
+        if (edt.getDateTime() != null) {
+            return new Date(edt.getDateTime().getValue());
+        }
+        if (edt.getDate() != null) {
+            return new Date(edt.getDate().getValue());
+        }
+        return null;
+    }
+
+    private Map<String, NodeRef> buildGoogleIdMap(NodeRef calendarContainer) {
+        Map<String, NodeRef> map = new HashMap<String, NodeRef>();
+        List<ChildAssociationRef> children = nodeService.getChildAssocs(calendarContainer);
+        for (ChildAssociationRef child : children) {
+            NodeRef eventNode = child.getChildRef();
+            if (nodeService.hasAspect(eventNode, ASPECT_SYNCED)) {
+                String gEventId = (String) nodeService.getProperty(eventNode, PROP_GOOGLE_EVENT_ID);
+                if (gEventId != null) {
+                    map.put(gEventId, eventNode);
+                }
+            }
+        }
+        return map;
+    }
+
+    private String getSyncToken(String siteId) {
+        SiteInfo site = siteService.getSite(siteId);
+        if (site == null) return null;
+        return (String) nodeService.getProperty(site.getNodeRef(), PROP_SYNC_TOKEN);
+    }
+
+    private void storeSyncToken(String siteId, String syncToken) {
+        SiteInfo site = siteService.getSite(siteId);
+        if (site == null) return;
+        nodeService.setProperty(site.getNodeRef(), PROP_SYNC_TOKEN, syncToken);
+    }
 
     private Calendar getCalendarService(String siteId) throws IOException {
         SiteInfo site = siteService.getSite(siteId);
@@ -297,12 +459,8 @@ public class GoogleCalendarService {
         String refreshToken = (String) nodeService.getProperty(siteNode, PROP_REFRESH_TOKEN);
         Long expiry = (Long) nodeService.getProperty(siteNode, PROP_TOKEN_EXPIRY);
 
-        if (accessToken == null || refreshToken == null) {
-            logger.warn("No OAuth tokens for site: " + siteId);
-            return null;
-        }
+        if (accessToken == null || refreshToken == null) return null;
 
-        // Refresh token if expired
         if (expiry != null && System.currentTimeMillis() > expiry - 60000) {
             accessToken = refreshAccessToken(siteNode, refreshToken);
         }
@@ -316,20 +474,6 @@ public class GoogleCalendarService {
     }
 
     private String refreshAccessToken(NodeRef siteNode, String refreshToken) throws IOException {
-        TokenResponse response = new TokenResponse();
-
-        com.google.api.client.http.HttpRequest request = HTTP_TRANSPORT.createRequestFactory()
-                .buildPostRequest(
-                        new GenericUrl("https://oauth2.googleapis.com/token"),
-                        new com.google.api.client.http.UrlEncodedContent(
-                                com.google.api.client.util.Maps.<String, String>newHashMap()));
-
-        // Use the refresh token flow
-        GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
-                HTTP_TRANSPORT, JSON_FACTORY, clientId, clientSecret,
-                Collections.singleton(CalendarScopes.CALENDAR))
-                .build();
-
         Credential credential = new Credential.Builder(BearerToken.authorizationHeaderAccessMethod())
                 .setTransport(HTTP_TRANSPORT)
                 .setJsonFactory(JSON_FACTORY)
@@ -348,7 +492,6 @@ public class GoogleCalendarService {
             nodeService.setProperty(siteNode, PROP_TOKEN_EXPIRY, newExpiry);
         }
 
-        logger.debug("Refreshed Google OAuth token for site node: " + siteNode);
         return newAccessToken;
     }
 
@@ -367,21 +510,16 @@ public class GoogleCalendarService {
         if (location != null) event.setLocation(location);
 
         if (fromDate != null) {
-            EventDateTime start = new EventDateTime()
-                    .setDateTime(new com.google.api.client.util.DateTime(fromDate));
-            event.setStart(start);
+            event.setStart(new EventDateTime()
+                    .setDateTime(new com.google.api.client.util.DateTime(fromDate)));
         }
-
         if (toDate != null) {
-            EventDateTime end = new EventDateTime()
-                    .setDateTime(new com.google.api.client.util.DateTime(toDate));
-            event.setEnd(end);
+            event.setEnd(new EventDateTime()
+                    .setDateTime(new com.google.api.client.util.DateTime(toDate)));
         } else if (fromDate != null) {
-            // Default: 1 hour event
-            EventDateTime end = new EventDateTime()
+            event.setEnd(new EventDateTime()
                     .setDateTime(new com.google.api.client.util.DateTime(
-                            new Date(fromDate.getTime() + 3600000)));
-            event.setEnd(end);
+                            new Date(fromDate.getTime() + 3600000))));
         }
 
         return event;
@@ -406,7 +544,6 @@ public class GoogleCalendarService {
     private String getTargetCalendarId(String siteId) {
         SiteInfo site = siteService.getSite(siteId);
         if (site == null) return null;
-
         return (String) nodeService.getProperty(site.getNodeRef(), PROP_TARGET_CALENDAR_ID);
     }
 }

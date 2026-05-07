@@ -6,7 +6,6 @@
          http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
          http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context.xsd">
 
-    <!-- Load google.calendar.* properties from alfresco-global.properties -->
     <bean class="org.springframework.context.support.PropertySourcesPlaceholderConfigurer">
         <property name="locations">
             <list>
@@ -28,12 +27,38 @@
         <property name="redirectUri" value="${google.calendar.redirectUri:}"/>
     </bean>
 
-    <!-- Calendar Event Sync Policy -->
+    <!-- Calendar Event Sync Policy (Alfresco -> Google) -->
     <bean id="googleCalendarEventPolicy" class="org.iurit.alfresco.google.calendar.CalendarEventPolicy"
           init-method="init">
         <property name="policyComponent" ref="policyComponent"/>
         <property name="nodeService" ref="NodeService"/>
         <property name="googleCalendarService" ref="googleCalendarService"/>
+    </bean>
+
+    <!-- Reverse Sync Job: Google -> Alfresco (every 5 minutes) -->
+    <bean id="googleCalendarSyncScheduler" class="org.springframework.scheduling.quartz.SchedulerAccessorBean">
+        <property name="scheduler" ref="schedulerFactory"/>
+        <property name="triggers">
+            <list>
+                <ref bean="googleCalendarSyncTrigger"/>
+            </list>
+        </property>
+    </bean>
+
+    <bean id="googleCalendarSyncTrigger" class="org.springframework.scheduling.quartz.CronTriggerFactoryBean">
+        <property name="cronExpression" value="${google.calendar.syncCron:0 */5 * * * ?}"/>
+        <property name="startDelay" value="120000"/>
+        <property name="jobDetail">
+            <bean class="org.springframework.scheduling.quartz.JobDetailFactoryBean">
+                <property name="jobClass" value="org.iurit.alfresco.google.calendar.GoogleCalendarSyncJob"/>
+                <property name="durability" value="true"/>
+                <property name="jobDataAsMap">
+                    <map>
+                        <entry key="googleCalendarService" value-ref="googleCalendarService"/>
+                    </map>
+                </property>
+            </bean>
+        </property>
     </bean>
 
     <!-- Web Scripts -->
