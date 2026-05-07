@@ -1,0 +1,8 @@
+<webscript>
+    <shortname>Google Calendar Config</shortname>
+    <description>Get Google Calendar configuration for a site</description>
+    <url>/api/google-calendar/config?siteId={siteId}</url>
+    <authentication>user</authentication>
+    <format default="json">argument</format>
+    <transaction>required</transaction>
+</webscript>

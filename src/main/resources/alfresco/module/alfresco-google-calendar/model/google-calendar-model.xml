@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<model name="gcal:googleCalendarModel" xmlns="http://www.alfresco.org/model/dictionary/1.0">
+
+    <description>Google Calendar Sync Model</description>
+    <author>Iurit</author>
+    <version>1.0</version>
+
+    <imports>
+        <import uri="http://www.alfresco.org/model/dictionary/1.0" prefix="d"/>
+        <import uri="http://www.alfresco.org/model/content/1.0" prefix="cm"/>
+        <import uri="http://www.alfresco.org/model/site/1.0" prefix="st"/>
+    </imports>
+
+    <namespaces>
+        <namespace uri="http://www.iurit.org/model/google-calendar/1.0" prefix="gcal"/>
+    </namespaces>
+
+    <aspects>
+        <!-- Applied to ia:calendarEvent nodes when synced to Google Calendar -->
+        <aspect name="gcal:synced">
+            <title>Google Calendar Synced</title>
+            <properties>
+                <property name="gcal:googleEventId">
+                    <title>Google Calendar Event ID</title>
+                    <type>d:text</type>
+                    <mandatory>false</mandatory>
+                    <index enabled="true">
+                        <atomic>true</atomic>
+                        <stored>false</stored>
+                        <tokenised>false</tokenised>
+                    </index>
+                </property>
+                <property name="gcal:googleCalendarId">
+                    <title>Google Calendar ID</title>
+                    <type>d:text</type>
+                    <mandatory>false</mandatory>
+                </property>
+                <property name="gcal:lastSyncTime">
+                    <title>Last Sync Time</title>
+                    <type>d:datetime</type>
+                    <mandatory>false</mandatory>
+                </property>
+            </properties>
+        </aspect>
+
+        <!-- Applied to st:site nodes to store Google Calendar config per site -->
+        <aspect name="gcal:siteConfig">
+            <title>Google Calendar Site Configuration</title>
+            <properties>
+                <property name="gcal:enabled">
+                    <title>Google Calendar Sync Enabled</title>
+                    <type>d:boolean</type>
+                    <default>false</default>
+                </property>
+                <property name="gcal:targetCalendarId">
+                    <title>Target Google Calendar ID</title>
+                    <type>d:text</type>
+                    <mandatory>false</mandatory>
+                </property>
+                <property name="gcal:accessToken">
+                    <title>OAuth Access Token</title>
+                    <type>d:text</type>
+                    <mandatory>false</mandatory>
+                </property>
+                <property name="gcal:refreshToken">
+                    <title>OAuth Refresh Token</title>
+                    <type>d:text</type>
+                    <mandatory>false</mandatory>
+                </property>
+                <property name="gcal:tokenExpiry">
+                    <title>Token Expiry Time</title>
+                    <type>d:long</type>
+                    <mandatory>false</mandatory>
+                </property>
+            </properties>
+        </aspect>
+    </aspects>
+
+</model>
