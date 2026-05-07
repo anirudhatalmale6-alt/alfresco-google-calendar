@@ -9,17 +9,15 @@
     <version>1.0.0</version>
     <packaging>jar</packaging>
     <name>Alfresco Google Calendar Sync</name>
-    <description>One-way sync from Alfresco Site Calendar to Google Calendar</description>
+    <description>Bidirectional sync between Alfresco Site Calendar and Google Calendar</description>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
-        <alfresco.platform.version>6.1.2-ga</alfresco.platform.version>
     </properties>
 
     <dependencies>
-        <!-- Alfresco -->
         <dependency>
             <groupId>org.alfresco</groupId>
             <artifactId>alfresco-repository</artifactId>
@@ -38,8 +36,22 @@
             <version>6.20</version>
             <scope>provided</scope>
         </dependency>
-
-        <!-- Google Calendar API (Java 8 compatible) -->
+        <dependency>
+            <groupId>org.quartz-scheduler</groupId>
+            <artifactId>quartz</artifactId>
+            <version>2.3.0</version>
+            <scope>provided</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.mchange</groupId>
+                    <artifactId>c3p0</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>com.mchange</groupId>
+                    <artifactId>mchange-commons-java</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
         <dependency>
             <groupId>com.google.api-client</groupId>
             <artifactId>google-api-client</artifactId>
