@@ -337,8 +337,19 @@ public class GoogleCalendarService {
         String googleEventId = googleEvent.getId();
         NodeRef existingNode = googleIdToNode.get(googleEventId);
 
+        if (existingNode != null && !nodeService.exists(existingNode)) {
+            existingNode = null;
+        }
+
+        if (existingNode == null) {
+            existingNode = findEventByGoogleId(calendarContainer, googleEventId);
+            if (existingNode != null) {
+                googleIdToNode.put(googleEventId, existingNode);
+            }
+        }
+
         if ("cancelled".equals(googleEvent.getStatus())) {
-            if (existingNode != null && nodeService.exists(existingNode)) {
+            if (existingNode != null) {
                 RECENTLY_SYNCED_FROM_GOOGLE.add(existingNode);
                 nodeService.deleteNode(existingNode);
                 logger.info("Deleted Alfresco event (Google deleted): " + googleEventId);
@@ -346,14 +357,23 @@ public class GoogleCalendarService {
             return;
         }
 
-        if (existingNode != null && nodeService.exists(existingNode)) {
+        if (existingNode != null) {
             updateAlfrescoEventFromGoogle(existingNode, googleEvent);
         } else {
-            createAlfrescoEventFromGoogle(calendarContainer, calendarId, googleEvent);
+            NodeRef created = createAlfrescoEventFromGoogle(calendarContainer, calendarId, googleEvent);
+            if (created != null) {
+                googleIdToNode.put(googleEventId, created);
+            }
         }
     }
 
-    private void createAlfrescoEventFromGoogle(NodeRef calendarContainer, String calendarId, Event googleEvent) {
+    private NodeRef createAlfrescoEventFromGoogle(NodeRef calendarContainer, String calendarId, Event googleEvent) {
+        NodeRef existing = findEventByGoogleId(calendarContainer, googleEvent.getId());
+        if (existing != null) {
+            updateAlfrescoEventFromGoogle(existing, googleEvent);
+            return existing;
+        }
+
         Map<QName, Serializable> props = new HashMap<QName, Serializable>();
         props.put(PROP_WHAT_EVENT, googleEvent.getSummary() != null ? googleEvent.getSummary() : "Untitled Event");
         props.put(ContentModel.PROP_NAME, "gcal-" + googleEvent.getId());
@@ -389,6 +409,7 @@ public class GoogleCalendarService {
 
         logger.info("Created Alfresco event from Google: " + googleEvent.getId()
                 + " (" + googleEvent.getSummary() + ")");
+        return eventNode;
     }
 
     private void updateAlfrescoEventFromGoogle(NodeRef eventNode, Event googleEvent) {
@@ -431,9 +452,32 @@ public class GoogleCalendarService {
                 if (gEventId != null) {
                     map.put(gEventId, eventNode);
                 }
+            } else {
+                String name = (String) nodeService.getProperty(eventNode, ContentModel.PROP_NAME);
+                if (name != null && name.startsWith("gcal-")) {
+                    map.put(name.substring(5), eventNode);
+                }
             }
         }
         return map;
+    }
+
+    private NodeRef findEventByGoogleId(NodeRef calendarContainer, String googleEventId) {
+        List<ChildAssociationRef> children = nodeService.getChildAssocs(calendarContainer);
+        for (ChildAssociationRef child : children) {
+            NodeRef eventNode = child.getChildRef();
+            if (nodeService.hasAspect(eventNode, ASPECT_SYNCED)) {
+                String gEventId = (String) nodeService.getProperty(eventNode, PROP_GOOGLE_EVENT_ID);
+                if (googleEventId.equals(gEventId)) {
+                    return eventNode;
+                }
+            }
+            String name = (String) nodeService.getProperty(eventNode, ContentModel.PROP_NAME);
+            if (("gcal-" + googleEventId).equals(name)) {
+                return eventNode;
+            }
+        }
+        return null;
     }
 
     private String getSyncToken(String siteId) {

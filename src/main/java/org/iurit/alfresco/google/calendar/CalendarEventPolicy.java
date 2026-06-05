@@ -71,6 +71,7 @@ public class CalendarEventPolicy implements
         NodeRef eventNode = childAssocRef.getChildRef();
         if (!nodeService.exists(eventNode)) return;
         if (GoogleCalendarService.wasRecentlySyncedFromGoogle(eventNode)) return;
+        if (nodeService.hasAspect(eventNode, GoogleCalendarService.ASPECT_SYNCED)) return;
 
         try {
             IN_SYNC.set(Boolean.TRUE);
