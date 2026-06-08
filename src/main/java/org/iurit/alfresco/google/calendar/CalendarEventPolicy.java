@@ -13,6 +13,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import java.io.Serializable;
+import java.util.Date;
 import java.util.Map;
 
 public class CalendarEventPolicy implements
@@ -72,6 +73,7 @@ public class CalendarEventPolicy implements
         if (!nodeService.exists(eventNode)) return;
         if (GoogleCalendarService.wasRecentlySyncedFromGoogle(eventNode)) return;
         if (nodeService.hasAspect(eventNode, GoogleCalendarService.ASPECT_SYNCED)) return;
+        if (isEventPast(eventNode)) return;
 
         try {
             IN_SYNC.set(Boolean.TRUE);
@@ -88,6 +90,7 @@ public class CalendarEventPolicy implements
         if (IN_SYNC.get()) return;
         if (!nodeService.exists(nodeRef)) return;
         if (GoogleCalendarService.wasRecentlySyncedFromGoogle(nodeRef)) return;
+        if (isEventPast(nodeRef)) return;
 
         boolean relevant = hasChanged(before, after, GoogleCalendarService.PROP_WHAT_EVENT)
                 || hasChanged(before, after, GoogleCalendarService.PROP_FROM_DATE)
@@ -144,6 +147,14 @@ public class CalendarEventPolicy implements
         } finally {
             IN_SYNC.set(Boolean.FALSE);
         }
+    }
+
+    private boolean isEventPast(NodeRef eventNode) {
+        Date toDate = (Date) nodeService.getProperty(eventNode, GoogleCalendarService.PROP_TO_DATE);
+        if (toDate == null) {
+            toDate = (Date) nodeService.getProperty(eventNode, GoogleCalendarService.PROP_FROM_DATE);
+        }
+        return toDate != null && toDate.before(new Date());
     }
 
     private boolean hasChanged(Map<QName, Serializable> before, Map<QName, Serializable> after, QName prop) {

@@ -334,6 +334,10 @@ public class GoogleCalendarService {
     private void processGoogleEvent(String siteId, NodeRef calendarContainer,
             Map<String, NodeRef> googleIdToNode, String calendarId, Event googleEvent) {
 
+        if (!"cancelled".equals(googleEvent.getStatus()) && isGoogleEventPast(googleEvent)) {
+            return;
+        }
+
         String googleEventId = googleEvent.getId();
         NodeRef existingNode = googleIdToNode.get(googleEventId);
 
@@ -430,6 +434,14 @@ public class GoogleCalendarService {
     }
 
     // ---- Helpers ----
+
+    private boolean isGoogleEventPast(Event googleEvent) {
+        Date endDate = getDateFromEventDateTime(googleEvent.getEnd());
+        if (endDate == null) {
+            endDate = getDateFromEventDateTime(googleEvent.getStart());
+        }
+        return endDate != null && endDate.before(new Date());
+    }
 
     private Date getDateFromEventDateTime(EventDateTime edt) {
         if (edt == null) return null;
